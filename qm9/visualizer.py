@@ -5,6 +5,8 @@ import glob
 import random
 import matplotlib
 import imageio
+from ase import Atoms
+from ase.io import read as ase_read, write as ase_write
 
 
 matplotlib.use('Agg')
@@ -15,48 +17,46 @@ from qm9 import bond_analyze
 ###########-->
 
 
+def _frame_to_ase_atoms(one_hot, positions, dataset_info, n_atoms):
+    atom_types = torch.argmax(one_hot, dim=1)
+    symbols = [dataset_info['atom_decoder'][int(atom_types[i])] for i in range(n_atoms)]
+    pos = positions[:n_atoms].detach().cpu().numpy()
+    return Atoms(symbols=symbols, positions=pos)
+
+
 def save_xyz_file(path, one_hot, charges, positions, dataset_info, id_from=0, name='molecule', node_mask=None):
-    try:
-        os.makedirs(path)
-    except OSError:
-        pass
+    os.makedirs(path, exist_ok=True)
 
     if node_mask is not None:
         atomsxmol = torch.sum(node_mask, dim=1)
     else:
         atomsxmol = [one_hot.size(1)] * one_hot.size(0)
 
+    frames = []
     for batch_i in range(one_hot.size(0)):
-        f = open(path + name + '_' + "%03d.txt" % (batch_i + id_from), "w")
-        f.write("%d\n\n" % atomsxmol[batch_i])
-        atoms = torch.argmax(one_hot[batch_i], dim=1)
         n_atoms = int(atomsxmol[batch_i])
-        for atom_i in range(n_atoms):
-            atom = atoms[atom_i]
-            atom = dataset_info['atom_decoder'][atom]
-            f.write("%s %.9f %.9f %.9f\n" % (atom, positions[batch_i, atom_i, 0], positions[batch_i, atom_i, 1], positions[batch_i, atom_i, 2]))
-        f.close()
+        frames.append(_frame_to_ase_atoms(one_hot[batch_i], positions[batch_i], dataset_info, n_atoms))
+
+    if name in {'chain', 'conditional'}:
+        ase_write(os.path.join(path, f'{name}.extxyz'), frames, format='extxyz')
+    else:
+        for batch_i, atoms in enumerate(frames):
+            ase_write(os.path.join(path, f'{name}_{batch_i + id_from:03d}.extxyz'), atoms, format='extxyz')
 
 
 def load_molecule_xyz(file, dataset_info):
-    with open(file, encoding='utf8') as f:
-        n_atoms = int(f.readline())
-        one_hot = torch.zeros(n_atoms, len(dataset_info['atom_decoder']))
-        charges = torch.zeros(n_atoms, 1)
-        positions = torch.zeros(n_atoms, 3)
-        f.readline()
-        atoms = f.readlines()
-        for i in range(n_atoms):
-            atom = atoms[i].split(' ')
-            atom_type = atom[0]
-            one_hot[i, dataset_info['atom_encoder'][atom_type]] = 1
-            position = torch.Tensor([float(e) for e in atom[1:]])
-            positions[i, :] = position
-        return positions, one_hot, charges
+    atoms_obj = ase_read(file)
+    n_atoms = len(atoms_obj)
+    one_hot = torch.zeros(n_atoms, len(dataset_info['atom_decoder']))
+    charges = torch.zeros(n_atoms, 1)
+    positions = torch.tensor(atoms_obj.get_positions(), dtype=torch.float32)
+    for i, atom_type in enumerate(atoms_obj.get_chemical_symbols()):
+        one_hot[i, dataset_info['atom_encoder'][atom_type]] = 1
+    return positions, one_hot, charges
 
 
 def load_xyz_files(path, shuffle=True):
-    files = glob.glob(path + "/*.txt")
+    files = glob.glob(path + "/*.extxyz")
     if shuffle:
         random.shuffle(files)
     return files
@@ -306,91 +306,19 @@ def plot_grid():
 
 def visualize(path, dataset_info, max_num=25, wandb=None, spheres_3d=False):
     files = load_xyz_files(path)[0:max_num]
-    for file in files:
-        positions, one_hot, charges = load_molecule_xyz(file, dataset_info)
-        atom_type = torch.argmax(one_hot, dim=1).numpy()
-        dists = torch.cdist(positions.unsqueeze(0), positions.unsqueeze(0)).squeeze(0)
-        dists = dists[dists > 0]
-        print("Average distance between atoms", dists.mean().item())
-        plot_data3d(positions, atom_type, dataset_info=dataset_info, save_path=file[:-4] + '.png',
-                    spheres_3d=spheres_3d)
-
-        if wandb is not None:
-            path = file[:-4] + '.png'
-            # Log image(s)
-            im = plt.imread(path)
-            wandb.log({'molecule': [wandb.Image(im, caption=path)]})
+    print(f'Skipping PNG rendering for {len(files)} extxyz molecule files in {path}.')
 
 
 def visualize_chain(path, dataset_info, wandb=None, spheres_3d=False,
                     mode="chain"):
-    files = load_xyz_files(path)
-    files = sorted(files)
-    save_paths = []
-
-    for i in range(len(files)):
-        file = files[i]
-
-        positions, one_hot, charges = load_molecule_xyz(file, dataset_info=dataset_info)
-
-        atom_type = torch.argmax(one_hot, dim=1).numpy()
-        fn = file[:-4] + '.png'
-        plot_data3d(positions, atom_type, dataset_info=dataset_info,
-                    save_path=fn, spheres_3d=spheres_3d, alpha=1.0)
-        save_paths.append(fn)
-
-    imgs = [imageio.imread(fn) for fn in save_paths]
-    dirname = os.path.dirname(save_paths[0])
-    gif_path = dirname + '/output.gif'
-    print(f'Creating gif with {len(imgs)} images')
-    # Add the last frame 10 times so that the final result remains temporally.
-    # imgs.extend([imgs[-1]] * 10)
-    imageio.mimsave(gif_path, imgs, subrectangles=True)
-
-    if wandb is not None:
-        wandb.log({mode: [wandb.Video(gif_path, caption=gif_path)]})
+    files = load_xyz_files(path, shuffle=False)
+    print(f'Skipping GIF rendering for {len(files)} extxyz chain files in {path}.')
 
 
 def visualize_chain_uncertainty(
         path, dataset_info, wandb=None, spheres_3d=False, mode="chain"):
-    files = load_xyz_files(path)
-    files = sorted(files)
-    save_paths = []
-
-    for i in range(len(files)):
-        if i + 2 == len(files):
-            break
-
-        file = files[i]
-        file2 = files[i+1]
-        file3 = files[i+2]
-
-        positions, one_hot, _ = load_molecule_xyz(file, dataset_info=dataset_info)
-        positions2, one_hot2, _ = load_molecule_xyz(
-            file2, dataset_info=dataset_info)
-        positions3, one_hot3, _ = load_molecule_xyz(
-            file3, dataset_info=dataset_info)
-
-        all_positions = torch.stack([positions, positions2, positions3], dim=0)
-        one_hot = torch.stack([one_hot, one_hot2, one_hot3], dim=0)
-
-        all_atom_type = torch.argmax(one_hot, dim=2).numpy()
-        fn = file[:-4] + '.png'
-        plot_data3d_uncertainty(
-            all_positions, all_atom_type, dataset_info=dataset_info,
-            save_path=fn, spheres_3d=spheres_3d, alpha=0.5)
-        save_paths.append(fn)
-
-    imgs = [imageio.imread(fn) for fn in save_paths]
-    dirname = os.path.dirname(save_paths[0])
-    gif_path = dirname + '/output.gif'
-    print(f'Creating gif with {len(imgs)} images')
-    # Add the last frame 10 times so that the final result remains temporally.
-    # imgs.extend([imgs[-1]] * 10)
-    imageio.mimsave(gif_path, imgs, subrectangles=True)
-
-    if wandb is not None:
-        wandb.log({mode: [wandb.Video(gif_path, caption=gif_path)]})
+    files = load_xyz_files(path, shuffle=False)
+    print(f'Skipping GIF rendering for {len(files)} extxyz chain files in {path}.')
 
 
 if __name__ == '__main__':

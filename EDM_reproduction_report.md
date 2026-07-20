@@ -568,7 +568,7 @@ python eval_checkpoint_metrics.py \
   --json_path outputs/edm_qm9_b256_lr4e-4_1100ep/eval_metrics/epoch_500.json
 ```
 
-Save sampled structures during metric evaluation:
+Save sampled structures during metric evaluation. These are ASE-compatible `.extxyz` files:
 
 ```bash
 python eval_checkpoint_metrics.py \
@@ -732,15 +732,14 @@ PROJECT_ROOT=${PROJECT_ROOT:-/g/g90/zhou6/lassen-space/NPS/notebooks/GCparticle/
 cd "$PROJECT_ROOT"
 ```
 
-9. Matplotlib removed the old `Axes3D.w_xaxis` API. `qm9/visualizer.py` was patched to use `ax.xaxis` instead. Without this patch, visualization sampling at epoch 20, 40, ... crashes after writing samples.
+9. The upstream code wrote nonstandard XYZ-like `.txt` files and rendered PNG/GIF graphics. This fork now writes ASE-compatible `.extxyz` files through `ase.io` and disables PNG/GIF rendering. Molecule samples are written as separate `.extxyz` files. Chains and conditional sweeps are written as multi-frame `.extxyz` trajectories.
 10. Training-loop stability evaluation does not save the 1000 evaluation samples by default. It only uses them for metrics. Visualization samples are saved every `TEST_EPOCHS` epochs under directories like:
 
 ```text
-outputs/<exp_name>/epoch_500_/
-outputs/<exp_name>/epoch_500_/chain/
+outputs/<exp_name>/epoch_500_/molecule_000.extxyz
+outputs/<exp_name>/epoch_500_/chain/chain.extxyz
 ```
 
-These are small XYZ-like `.txt` files, not `.extxyz`.
 11. The best checkpoint is overwritten at:
 
 ```text
