@@ -190,10 +190,15 @@ def analyze_and_save(epoch, model_sample, nodes_dist, args, device, dataset_info
 
     molecules = {key: torch.cat(molecules[key], dim=0) for key in molecules}
     validity_dict, rdkit_tuple = analyze_stability_for_molecules(molecules, dataset_info)
+    print("Stability over %d molecules: mol_stable %.4f, atom_stable %.4f" % (
+        n_samples, validity_dict['mol_stable'], validity_dict['atm_stable']))
 
     wandb.log(validity_dict)
     if rdkit_tuple is not None:
-        wandb.log({'Validity': rdkit_tuple[0][0], 'Uniqueness': rdkit_tuple[0][1], 'Novelty': rdkit_tuple[0][2]})
+        rdkit_metrics = rdkit_tuple[0]
+        print("RDKit metrics over %d molecules: validity %.4f, uniqueness %.4f, novelty %.4f" % (
+            n_samples, rdkit_metrics[0], rdkit_metrics[1], rdkit_metrics[2]))
+        wandb.log({'Validity': rdkit_metrics[0], 'Uniqueness': rdkit_metrics[1], 'Novelty': rdkit_metrics[2]})
     return validity_dict
 
 

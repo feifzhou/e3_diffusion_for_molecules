@@ -161,6 +161,8 @@ def main():
         args, eval_args, device, generative_model, nodes_dist,
         prop_dist, dataset_info, n_samples=eval_args.n_samples,
         batch_size=eval_args.batch_size_gen, save_to_xyz=eval_args.save_to_xyz)
+    print("Stability over %d molecules: mol_stable %.4f, atom_stable %.4f" % (
+        eval_args.n_samples, stability_dict['mol_stable'], stability_dict['atm_stable']))
     print(stability_dict)
 
     if rdkit_metrics is not None:

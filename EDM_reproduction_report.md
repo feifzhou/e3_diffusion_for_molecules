@@ -595,6 +595,43 @@ python eval_checkpoint_metrics.py \
 
 This script is useful because the upstream training loop logs `mol_stable` and `atom_stable` only to wandb. With `--no_wandb`, those two metrics are not printed in the training log.
 
+Checkpoint sweep over 100-epoch intervals. The loop skips missing checkpoints. At the time of this sweep, the available 100-multiple checkpoints were 100, 200, 400, and 500. Epoch 300 was not present because checkpoint files are only saved on evaluated epochs when validation NLL improves.
+
+```bash
+cd /g/g90/zhou6/lassen-space/NPS/notebooks/GCparticle/EDM
+
+OUT=outputs/edm_qm9_b256_lr4e-4_1100ep/eval_metrics/checkpoint_metrics_100_200_400_500.csv
+mkdir -p "$(dirname "$OUT")"
+rm -f "$OUT"
+
+for E in 100 200 300 400 500 680 760 880 940 1000; do
+  CKPT=outputs/edm_qm9_b256_lr4e-4_1100ep/generative_model_ema_${E}.npy
+  if [ ! -f "$CKPT" ]; then
+    echo "missing checkpoint ${E}, skipping"
+    continue
+  fi
+
+  CUDA_VISIBLE_DEVICES=0 HIP_VISIBLE_DEVICES=0 python eval_checkpoint_metrics.py \
+    --model_path outputs/edm_qm9_b256_lr4e-4_1100ep \
+    --checkpoint_epoch "$E" \
+    --n_samples 1000 \
+    --batch_size_gen 1000 \
+    --csv_path "$OUT" \
+    --json_path outputs/edm_qm9_b256_lr4e-4_1100ep/eval_metrics/epoch_${E}_1000.json
+done
+```
+
+Results from 1000 generated samples per checkpoint:
+
+| epoch | mol stable | atom stable | valid | unique given valid | valid and unique | novelty given unique | unique valid count |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 100 | 0.002 | 0.738 | 0.203 | 1.000 | 0.203 | 1.000 | 203 |
+| 200 | 0.058 | 0.849 | 0.534 | 1.000 | 0.534 | 0.987 | 534 |
+| 400 | 0.150 | 0.893 | 0.553 | 1.000 | 0.553 | 0.948 | 553 |
+| 500 | 0.194 | 0.902 | 0.594 | 0.998 | 0.593 | 0.943 | 593 |
+
+These metrics are stochastic because they are computed from newly sampled molecules. The trends are still useful: atom stability, molecule stability, and validity improve with training, but the large-batch run at epoch 500 is still far from the paper target of about 0.82 molecule stability, 0.987 atom stability, and 0.907 valid-and-unique.
+
 ### 8.7 Parse training log metrics
 
 The training log does print RDKit validity, uniqueness, novelty, validation NLL, and test NLL every `TEST_EPOCHS` epochs.
